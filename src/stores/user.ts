@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { UserProfile, EmotionLevel, ConversationStage, ChatMessage, EpisodicMemory, AudioType } from '@/types'
+import type { UserProfile, EmotionLevel, ConversationStage, EpisodicMemory, AudioType } from '@/types'
 
 export const useUserStore = defineStore('user', () => {
   // ── 用户基础信息 ──

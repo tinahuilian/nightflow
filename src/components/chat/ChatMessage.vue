@@ -49,15 +49,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { Message } from '@ai-sdk/vue'
 import type { ConversationStage } from '@/types'
 
-interface Message {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  createdAt?: Date
-  toolInvocations?: Array<{ toolName: string; state: string }>
-}
 
 const props = defineProps<{
   message: Message
