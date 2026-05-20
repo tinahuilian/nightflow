@@ -25,7 +25,7 @@
     >
       <!-- 欢迎占位（无消息时） -->
       <div
-        v-if="messages.length === 0 && !isLoading"
+        v-if="displayMessages.length === 0 && !isLoading"
         class="flex flex-col items-center justify-center h-full text-center py-20"
       >
         <div class="animate-float mb-6">
@@ -41,7 +41,7 @@
       <!-- 消息列表 -->
       <TransitionGroup name="msg" tag="div" class="space-y-4">
         <ChatMessage
-          v-for="msg in messages"
+          v-for="msg in displayMessages"
           :key="msg.id"
           :message="msg"
           :stage="stage"
@@ -168,6 +168,11 @@ const breathingPattern = ref<BreathingPattern>(BREATHING_PATTERNS['4-7-8'])
 const goodnightMessage = ref('')
 
 const stage = computed(() => userStore.conversationStage)
+
+// 过滤掉初始化消息，不显示在 UI 中
+const displayMessages = computed(() => {
+  return messages.value.filter(m => m.content !== '__init__')
+})
 
 // ── useChat 接入 Vercel AI SDK ──
 const {
