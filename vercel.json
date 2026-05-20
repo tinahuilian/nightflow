@@ -1,0 +1,18 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/daily-push",
+      "schedule": "30 14 * * *"
+    },
+    {
+      "path": "/api/cron/weekly-report",
+      "schedule": "0 13 * * 0"
+    }
+  ]
+}
