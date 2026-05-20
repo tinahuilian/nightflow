@@ -2,14 +2,30 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { streamText, tool } from 'ai'
 import { z } from 'zod'
 
-// Vercel Serverless Function / Node.js 开发服务器兼容
-export const runtime = 'edge'
+// Vercel Edge Function
+export const config = {
+  runtime: 'edge',
+}
+
+const apiKey = process.env.GEMINI_API_KEY
 
 const google = createGoogleGenerativeAI({
-  apiKey: process.env.GEMINI_API_KEY ?? '',
+  apiKey: apiKey ?? '',
 })
 
 export default async function handler(req: Request): Promise<Response> {
+  // CORS 预检
+  if (req.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      },
+    })
+  }
+
   if (req.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405 })
   }
@@ -26,6 +42,14 @@ export default async function handler(req: Request): Promise<Response> {
       systemPrompt: string
       stage: string
       userProfile?: { nickname: string }
+    }
+
+    if (!apiKey) {
+      console.error('[Chat API] GEMINI_API_KEY is not set')
+      return new Response(
+        JSON.stringify({ error: 'API key not configured' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      )
     }
 
     if (!messages || !Array.isArray(messages)) {
