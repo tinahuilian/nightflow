@@ -48,8 +48,8 @@
         />
       </TransitionGroup>
 
-      <!-- AI 正在输入指示器 -->
-      <div v-if="isLoading && !streamContent" class="flex items-center gap-3 pl-1">
+      <!-- AI 正在输入指示器（等待响应阶段） -->
+      <div v-if="chat.status === 'submitted'" class="flex items-center gap-3 pl-1">
         <div class="flex gap-1">
           <span
             v-for="i in 3"
@@ -57,15 +57,6 @@
             class="w-1.5 h-1.5 rounded-full bg-purple-mist/60"
             :style="{ animation: `pulse-soft 1.5s ease-in-out ${(i-1) * 0.2}s infinite` }"
           />
-        </div>
-      </div>
-
-      <!-- 流式输出中的消息 -->
-      <div v-if="streamContent" class="animate-fade-in">
-        <div class="msg-bubble-ai max-w-[85%]" :class="slowTypingClass">
-          <p class="text-white/85 text-sm leading-relaxed whitespace-pre-wrap typing-cursor">
-            {{ streamContent }}
-          </p>
         </div>
       </div>
 
@@ -92,7 +83,7 @@
     >
       <!-- 快捷回复（陪伴模式时显示） -->
       <div
-        v-if="stage === 'accompanying' && messages.length === 0"
+        v-if="stage === 'accompanying' && displayMessages.length === 0"
         class="flex gap-2 mb-3 overflow-x-auto pb-1 scrollbar-hide"
       >
         <button
@@ -143,8 +134,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
-import { useChat } from '@ai-sdk/vue'
+import { ref, computed, watch, nextTick, onMounted, reactive } from 'vue'
+import { Chat } from '@ai-sdk/vue'
+import { DefaultChatTransport } from 'ai'
 import { useUserStore } from '@/stores/user'
 import { useAudioStore } from '@/stores/audio'
 import { buildSystemPrompt, detectSleepKeywords, getNightGreeting } from '@/utils/prompt'
@@ -162,70 +154,68 @@ const audioStore = useAudioStore()
 const messageListRef = ref<HTMLElement>()
 const inputRef = ref<HTMLTextAreaElement>()
 const inputText = ref('')
-const streamContent = ref('')
 const showBreathing = ref(false)
 const breathingPattern = ref<BreathingPattern>(BREATHING_PATTERNS['4-7-8'])
 const goodnightMessage = ref('')
 
 const stage = computed(() => userStore.conversationStage)
 
-// 过滤掉初始化消息，不显示在 UI 中
-const displayMessages = computed(() => {
-  return messages.value.filter(m => m.content !== '__init__')
-})
-
-// ── useChat 接入 Vercel AI SDK ──
-const {
-  messages,
-  isLoading,
-  append,
-  setMessages,
-} = useChat({
-  api: '/api/chat',
-  // 每次请求附带 systemPrompt 和 stage 信息
-  body: computed(() => ({
-    systemPrompt: buildSystemPrompt(
-      userStore.profile,
-      userStore.conversationStage,
-      userStore.messageCount,
-    ),
-    stage: userStore.conversationStage,
-    userProfile: { nickname: userStore.nickname },
-  })),
-  onResponse: () => {
-    streamContent.value = ''
-  },
-  onFinish: (message) => {
-    streamContent.value = ''
-    // 处理 AI 消息中的工具调用结果
-    handleToolResults(message)
-    // 自动滚动到底部
+// ── Chat v4 实例 ──
+const chat = reactive(new Chat({
+  transport: new DefaultChatTransport({
+    api: '/api/chat',
+    body: () => ({
+      systemPrompt: buildSystemPrompt(
+        userStore.profile,
+        userStore.conversationStage,
+        userStore.messageCount,
+      ),
+      stage: userStore.conversationStage,
+      userProfile: { nickname: userStore.nickname },
+    }),
+  }),
+  onFinish: ({ message }) => {
+    handleToolResults(message as { parts?: Array<{ type: string; toolName?: string; output?: unknown }> })
     scrollToBottom()
   },
-  onError: (error) => {
+  onError: (error: Error) => {
     console.error('Chat error:', error)
-    streamContent.value = ''
   },
+}))
+
+// 获取文本内容工具函数
+function getMessageText(msg: { parts?: Array<{ type: string; text?: string }> }): string {
+  if (!msg.parts) return ''
+  return msg.parts
+    .filter(p => p.type === 'text')
+    .map(p => p.text ?? '')
+    .join('')
+}
+
+// 过滤掉初始化消息
+const displayMessages = computed(() => {
+  return chat.messages.filter(m => getMessageText(m) !== '__init__')
 })
 
-// ── 工具调用结果处理 ──
-function handleToolResults(message: { toolInvocations?: Array<{ state: string; toolName: string; result?: unknown }> }) {
-  if (!message.toolInvocations) return
+const isLoading = computed(() => chat.status === 'submitted' || chat.status === 'streaming')
 
-  for (const inv of message.toolInvocations) {
-    if (inv.state !== 'result') continue
-    const result = inv.result as Record<string, unknown>
+// ── 工具调用结果处理 ──
+function handleToolResults(message: { parts?: Array<{ type: string; toolName?: string; output?: unknown }> }) {
+  if (!message.parts) return
+
+  for (const part of message.parts) {
+    if (part.type !== 'tool-result') continue
+    const result = part.output as Record<string, unknown>
     if (!result) continue
 
+    const toolName = part.toolName as string
     const action = result.action as string
 
-    // 保存情绪
-    if (inv.toolName === 'save_emotion' && result.saved) {
+    if (toolName === 'save_emotion' && result.saved) {
       const saved = result.saved as { emotionTag: string; level: 'high_anxiety' | 'moderate' | 'calm' | 'very_calm'; summary: string }
       userStore.recordEmotion(saved.emotionTag, saved.level)
     }
 
-    // 播放环境音
     if (action === 'play_ambient_sound') {
       audioStore.play(result.type as AudioType, {
         fadeDuration: result.fade ? 3000 : 500,
@@ -233,21 +223,17 @@ function handleToolResults(message: { toolInvocations?: Array<{ state: string; t
       })
     }
 
-    // 呼吸引导
     if (action === 'start_breathing_exercise') {
       const pattern = result.pattern as string
       breathingPattern.value = BREATHING_PATTERNS[pattern] ?? BREATHING_PATTERNS['4-7-8']
       showBreathing.value = true
     }
 
-    // 助眠故事（前端减慢输出由 CSS 控制）
     if (action === 'play_sleep_story') {
-      // 触发睡眠模式过渡
       setTimeout(() => userStore.triggerSleepMode(), 1000)
     }
 
-    // 晚安语记录入睡时间
-    if (inv.toolName === 'save_sleep_log') {
+    if (toolName === 'save_sleep_log') {
       userStore.triggerGoodnight()
     }
   }
@@ -261,15 +247,13 @@ async function sendMessage() {
   inputText.value = ''
   resetTextareaHeight()
 
-  // 更新对话状态
   userStore.incrementMessageCount()
 
-  // 检测睡眠关键词
   if (detectSleepKeywords(text) && stage.value !== 'goodnight') {
     userStore.triggerSleepMode()
   }
 
-  await append({ role: 'user', content: text })
+  await chat.sendMessage({ text })
   scrollToBottom()
 }
 
@@ -288,7 +272,7 @@ function sendQuickPrompt(text: string) {
 
 // ── 开始新会话 ──
 function startNewSession() {
-  setMessages([])
+  chat.messages = []
   userStore.resetSession()
   goodnightMessage.value = ''
   audioStore.stop()
@@ -297,25 +281,20 @@ function startNewSession() {
 
 // ── 发送初始欢迎消息 ──
 onMounted(() => {
-  // 延迟 800ms 再发送，给渲染留时间
   setTimeout(() => {
     const greeting = getNightGreeting(userStore.nickname)
-    append({ role: 'user', content: '__init__' }, {
-      body: {
-        systemPrompt: buildSystemPrompt(userStore.profile, 'accompanying', 0),
-        stage: 'accompanying',
-        initGreeting: greeting,
-      }
-    })
+    chat.sendMessage({ text: '__init__' })
+    console.log('[NightFlow] init greeting:', greeting)
   }, 800)
 })
 
 // ── 监听晚安阶段，提取晚安语 ──
 watch(() => stage.value, (newStage) => {
   if (newStage === 'goodnight') {
-    const lastAiMsg = [...messages.value].reverse().find(m => m.role === 'assistant')
+    const msgs = chat.messages
+    const lastAiMsg = [...msgs].reverse().find(m => m.role === 'assistant')
     if (lastAiMsg) {
-      goodnightMessage.value = lastAiMsg.content
+      goodnightMessage.value = getMessageText(lastAiMsg)
     }
   }
 })
@@ -323,13 +302,9 @@ watch(() => stage.value, (newStage) => {
 // ── 监听 stage 变化，自动处理 ──
 watch(() => userStore.conversationStage, (newStage) => {
   if (newStage === 'sleep_preparing') {
-    // 降低音量
-    if (audioStore.isPlaying) {
-      audioStore.setVolume(0.2)
-    }
+    if (audioStore.isPlaying) audioStore.setVolume(0.2)
   }
   if (newStage === 'sleep_mode') {
-    // 音量进一步降低
     audioStore.setVolume(0.1)
   }
 })
@@ -364,13 +339,6 @@ const canSend = computed(() => {
 
 const containerClass = computed(() => {
   if (stage.value === 'sleep_mode') return 'opacity-95'
-  return ''
-})
-
-const slowTypingClass = computed(() => {
-  if (stage.value === 'sleep_mode' || stage.value === 'sleep_preparing') {
-    return 'slow-type'
-  }
   return ''
 })
 

@@ -10,8 +10,9 @@
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix --ignore-path .gitignore"
   },
   "dependencies": {
-    "@ai-sdk/google": "^0.0.55",
-    "ai": "^3.4.33",
+    "@ai-sdk/google": "^3.0.78",
+    "@ai-sdk/vue": "^3.0.189",
+    "ai": "^6.0.189",
     "pinia": "^2.2.6",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0"

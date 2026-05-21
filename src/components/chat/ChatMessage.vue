@@ -14,10 +14,7 @@
         </p>
 
         <!-- 工具调用状态（轻提示，不打扰） -->
-        <div
-          v-if="hasToolCalls"
-          class="mt-2 flex flex-wrap gap-1"
-        >
+        <div v-if="activeTools.length > 0" class="mt-2 flex flex-wrap gap-1">
           <span
             v-for="tool in activeTools"
             :key="tool"
@@ -35,7 +32,7 @@
           class="text-white/75 leading-relaxed whitespace-pre-wrap"
           :class="textSizeClass"
         >
-          {{ message.content }}
+          {{ displayContent }}
         </p>
       </template>
 
@@ -49,27 +46,30 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Message } from '@ai-sdk/vue'
+import type { UIMessage } from 'ai'
 import type { ConversationStage } from '@/types'
 
-
 const props = defineProps<{
-  message: Message
+  message: UIMessage
   stage: ConversationStage
 }>()
 
-// 助眠故事内容慢速显示（CSS 控制）
-const displayContent = computed(() => props.message.content)
-
-const hasToolCalls = computed(() => {
-  return props.message.toolInvocations && props.message.toolInvocations.length > 0
+// 从 parts 数组提取文本内容
+const displayContent = computed(() => {
+  if (!props.message.parts) return ''
+  return props.message.parts
+    .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+    .map(p => p.text)
+    .join('')
 })
 
+// 提取工具调用
 const activeTools = computed(() => {
-  if (!props.message.toolInvocations) return []
-  return props.message.toolInvocations
-    .filter(t => t.state === 'result')
-    .map(t => t.toolName)
+  if (!props.message.parts) return []
+  return props.message.parts
+    .filter(p => p.type === 'tool-invocation' || p.type === 'tool-result')
+    .map(p => (p as { toolName?: string }).toolName ?? '')
+    .filter(Boolean)
 })
 
 const toolLabel = (toolName: string): string => {
@@ -85,9 +85,7 @@ const toolLabel = (toolName: string): string => {
 }
 
 const textSizeClass = computed(() => {
-  if (props.stage === 'sleep_mode' || props.stage === 'goodnight') {
-    return 'text-xs'
-  }
+  if (props.stage === 'sleep_mode' || props.stage === 'goodnight') return 'text-xs'
   return 'text-sm'
 })
 
@@ -97,8 +95,9 @@ const slowTypingClass = computed(() => {
 })
 
 const timeStr = computed(() => {
-  if (!props.message.createdAt) return ''
-  return new Date(props.message.createdAt).toLocaleTimeString('zh-CN', {
+  const createdAt = (props.message as UIMessage & { createdAt?: Date }).createdAt
+  if (!createdAt) return ''
+  return new Date(createdAt).toLocaleTimeString('zh-CN', {
     hour: '2-digit',
     minute: '2-digit',
   })
